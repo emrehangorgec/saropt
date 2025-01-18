@@ -1,2 +1,6 @@
 PostEQ-SARopt-BuildingDamage/data/damaged/
 PostEQ-SARopt-BuildingDamage/data/intact/
+PostEQ-SARopt-BuildingDamage/weights
+PostEQ-SARopt-BuildingDamage/checkpoints_opt
+PostEQ-SARopt-BuildingDamage/checkpoints_saropt
+PostEQ-SARopt-BuildingDamage/checkpoints_sar
