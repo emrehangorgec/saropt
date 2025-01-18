@@ -7,6 +7,7 @@ import numpy as np
 from dataset import EarthquakeDataset, MyAug
 from model import MODEL_MM, MODEL_SAR, MODEL_OPT
 from metrics import compute_imagewise_retrieval_metrics, compute_imagewise_f1_metrics
+from logger import setup_logging
 
 torch.autograd.set_detect_anomaly(True)
 torch.manual_seed(42)
@@ -29,26 +30,23 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    if "fold-1.txt" == args.val_split:
-        train_splits = ["fold-2.txt", "fold-3.txt", "fold-4.txt", "fold-5.txt"]
-        val_split = ["fold-1.txt"]
-    elif "fold-2.txt" == args.val_split:
-        train_splits = ["fold-1.txt", "fold-3.txt", "fold-4.txt", "fold-5.txt"]
-        val_split = ["fold-2.txt"]
-    elif "fold-3.txt" == args.val_split:
-        train_splits = ["fold-1.txt", "fold-2.txt", "fold-4.txt", "fold-5.txt"]
-        val_split = ["fold-3.txt"]
-    elif "fold-4.txt" == args.val_split:
-        train_splits = ["fold-1.txt", "fold-2.txt", "fold-3.txt", "fold-5.txt"]
-        val_split = ["fold-4.txt"]
-    elif "fold-5.txt" == args.val_split:
-        train_splits = ["fold-1.txt", "fold-2.txt", "fold-3.txt", "fold-4.txt"]
-        val_split = ["fold-5.txt"]
+    logger = setup_logging(args.mode)
+    logger.info(
+        f"Training started with mode: {args.mode}, root: {args.root}, val_split: {args.val_split}"
+    )
+
+    train_splits = (
+        ["fold-2.txt", "fold-3.txt", "fold-4.txt", "fold-5.txt"]
+        if args.val_split == "fold-1.txt"
+        else []
+    )
+    val_splits = [args.val_split]
 
     train_dataset = EarthquakeDataset(args.root, train_splits)
-    val_dataset = EarthquakeDataset(args.root, val_split)
-
-    print(len(train_dataset), len(val_dataset))
+    val_dataset = EarthquakeDataset(args.root, val_splits)
+    logger.info(
+        f"Dataset size - Train: {len(train_dataset)}, Validation: {len(val_dataset)}"
+    )
 
     # class weighted data sampler
     y_train = train_dataset.labels
@@ -98,7 +96,6 @@ if __name__ == "__main__":
     best_auroc = 0
     best_epoch = 0
     for epoch in range(args.epochs):
-        # training
         model.train()
         train_loss = 0
         count = 0
@@ -118,84 +115,39 @@ if __name__ == "__main__":
                 outputs = model(opt, optftp)
             elif args.mode == "all":
                 outputs = model(sar, sarftp, opt, optftp)
+
             loss = criterion(outputs.squeeze(1), labels.float())
             loss.backward()
             optimizer.step()
             count += 1
             train_loss += loss.item()
             if i % 10 == 0:
-                print(args.val_split, epoch, i, loss.item())
+                logger.info(
+                    f"{args.val_split}, Epoch: {epoch}, Step: {i}, Loss: {loss.item():.4f}"
+                )
+        logger.info(f"Epoch {epoch}, Loss: {train_loss / len(train_loader)}")
 
-        # validation
         model.eval()
         out_all = []
         gt_all = []
-        for i, data in enumerate(val_loader, 0):
-            images = data[0]
-            labels = data[1].cuda()
-            sar, sarftp, opt, optftp = (
-                images["sar"].cuda(),
-                images["sarftp"].cuda(),
-                images["opt"].cuda(),
-                images["optftp"].cuda(),
-            )
-            if args.mode == "sar":
-                outputs = model(sar, sarftp)
-            elif args.mode == "opt":
-                outputs = model(opt, optftp)
-            elif args.mode == "all":
-                outputs = model(sar, sarftp, opt, optftp)
-            out_all.append(outputs.detach().cpu())
-            gt_all.append(labels.detach().cpu())
+        with torch.no_grad():
+            for data in val_loader:
+                images = data[0]
+                labels = data[1].cuda()
+                outputs = model(
+                    images["opt"].cuda(),
+                    images["optftp"].cuda(),
+                )
+                out_all.append(outputs.cpu())
+                gt_all.append(labels.cpu())
         out_all = torch.cat(out_all, 0).squeeze(1)
         gt_all = torch.cat(gt_all, 0)
-        loss = criterion(out_all, gt_all.float()).item()
-        out_all = torch.nn.Sigmoid()(out_all)
 
         f1_metrics = compute_imagewise_f1_metrics(out_all.numpy(), gt_all.numpy())
         auroc = compute_imagewise_retrieval_metrics(out_all.numpy(), gt_all.numpy())
 
-        print(
-            args.val_split,
-            "Epoch",
-            epoch,
-            "train loss {:.4f}".format(train_loss / count),
-            "val loss {:.4f}".format(loss),
-            "auroc",
-            auroc["auroc"],
-            "f1",
-            f1_metrics["f1"],
-            "precision",
-            f1_metrics["precision"],
-            "recall",
-            f1_metrics["recall"],
-            "best_f1",
-            f1_metrics["best_f1"],
-            "precision",
-            f1_metrics["best_f1_precision"],
-            "recall",
-            f1_metrics["best_f1_recall"],
-            "threshold",
-            f1_metrics["best_threshold"],
+        logger.info(
+            f"Epoch {epoch}, Validation AUROC: {auroc['auroc']:.4f}, F1: {f1_metrics['f1']:.4f}"
         )
 
-        if auroc["auroc"] > best_auroc:
-            best_f1 = f1_metrics["best_f1"]
-            best_auroc = auroc["auroc"]
-            best_epoch = epoch
-            torch.save(
-                model.state_dict(),
-                os.path.join(args.checkpoints, "checkpoint_ep{:02d}.pth".format(epoch)),
-            )
-
-    print(
-        args.val_split,
-        "best epoch",
-        best_epoch,
-        "best_f1",
-        best_f1,
-        "best_auroc",
-        best_auroc,
-        "time",
-        time.time() - start_time,
-    )
+    logger.info(f"Training completed. Best F1: {best_f1}, Best AUROC: {best_auroc}")

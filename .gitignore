@@ -4,3 +4,4 @@ weights/
 checkpoints_opt/
 checkpoints_saropt/
 checkpoints_sar/
+logs/
