@@ -9,6 +9,7 @@ from model import MODEL_MM, MODEL_SAR, MODEL_OPT
 from metrics import compute_imagewise_retrieval_metrics, compute_imagewise_f1_metrics
 from logger import setup_logging
 
+"""-"""
 torch.autograd.set_detect_anomaly(True)
 torch.manual_seed(42)
 random.seed(42)
