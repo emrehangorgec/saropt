@@ -130,24 +130,41 @@ if __name__ == "__main__":
         model.eval()
         out_all = []
         gt_all = []
-        with torch.no_grad():
-            for data in val_loader:
-                images = data[0]
-                labels = data[1].cuda()
-                outputs = model(
-                    images["opt"].cuda(),
-                    images["optftp"].cuda(),
-                )
-                out_all.append(outputs.cpu())
-                gt_all.append(labels.cpu())
+        for i, data in enumerate(val_loader, 0):
+            images = data[0]
+            labels = data[1].cuda()
+            sar, sarftp, opt, optftp = (
+                images["sar"].cuda(),
+                images["sarftp"].cuda(),
+                images["opt"].cuda(),
+                images["optftp"].cuda(),
+            )
+            if args.mode == "sar":
+                outputs = model(sar, sarftp)
+            elif args.mode == "opt":
+                outputs = model(opt, optftp)
+            elif args.mode == "all":
+                outputs = model(sar, sarftp, opt, optftp)
+            out_all.append(outputs.detach().cpu())
+            gt_all.append(labels.detach().cpu())
         out_all = torch.cat(out_all, 0).squeeze(1)
         gt_all = torch.cat(gt_all, 0)
+        loss = criterion(out_all, gt_all.float()).item()
+        out_all = torch.nn.Sigmoid()(out_all)
 
         f1_metrics = compute_imagewise_f1_metrics(out_all.numpy(), gt_all.numpy())
         auroc = compute_imagewise_retrieval_metrics(out_all.numpy(), gt_all.numpy())
 
         logger.info(
-            f"Epoch {epoch}, Validation AUROC: {auroc['auroc']:.4f}, F1: {f1_metrics['f1']:.4f}"
+            f"{args.val_split}, Epoch: {epoch}, Train Loss: {train_loss / len(train_loader):.4f}, "
+            f"Validation Loss: {loss:.4f}, AUROC: {auroc['auroc']:.4f}, F1: {f1_metrics['f1']:.4f}, "
+            f"Precision: {f1_metrics['precision']:.4f}, Recall: {f1_metrics['recall']:.4f}, "
+            f"Best F1: {f1_metrics['best_f1']:.4f}, Best Precision: {f1_metrics['best_f1_precision']:.4f}, "
+            f"Best Recall: {f1_metrics['best_f1_recall']:.4f}, Threshold: {f1_metrics['best_threshold']:.4f}"
         )
 
-    logger.info(f"Training completed. Best F1: {best_f1}, Best AUROC: {best_auroc}")
+    logger.info(
+        f"Training completed. Best Epoch: {best_epoch}, Best AUROC: {best_auroc:.4f}, Best F1: {best_f1:.4f}, "
+        f"Best Precision: {f1_metrics['best_f1_precision']:.4f}, Best Recall: {f1_metrics['best_f1_recall']:.4f}, "
+        f"Best Threshold: {f1_metrics['best_threshold']:.4f}"
+    )
